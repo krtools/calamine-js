@@ -15,7 +15,7 @@
 <div id="drop">Drop an .xlsx here or <input type="file" id="pick" accept=".xlsx,.xls,.ods"></div>
 <pre id="out">waiting for file…</pre>
 <script type="module">
-import init, { countCells, readSheetJson } from "./pkg/web/calamine_wasm.js";
+import init, { WasmWorkbook } from "./pkg/web/calamine_wasm.js";
 
 await init();
 const out = document.getElementById("out");
@@ -25,19 +25,38 @@ async function handle(file) {
   out.textContent = `reading ${file.name} (${(file.size / 1048576).toFixed(2)} MB)…`;
   const bytes = new Uint8Array(await file.arrayBuffer());
 
+  // open once: zip directory + sharedStrings parse
   let t0 = performance.now();
-  const stats = JSON.parse(countCells(bytes));
-  const parseMs = (performance.now() - t0).toFixed(0);
+  const wb = new WasmWorkbook(bytes);
+  const meta = JSON.parse(wb.meta());
+  const openMs = (performance.now() - t0).toFixed(0);
 
-  t0 = performance.now();
-  const rows = JSON.parse(readSheetJson(bytes, 0));
-  const rowsMs = (performance.now() - t0).toFixed(0);
-
-  out.textContent =
-    `parse only (stats):   ${parseMs} ms\n` +
-    `parse -> JS rows:     ${rowsMs} ms\n\n` +
-    `stats: ${JSON.stringify(stats, null, 2)}\n\n` +
-    `first row: ${JSON.stringify(rows[0])?.slice(0, 200)}`;
+  // stream EVERY sheet via the pull cursor, count rows/cells
+  let text = `open (zip dir + sharedStrings): ${openMs} ms\n\n`;
+  let sample = "";
+  try {
+    for (const sheet of meta.sheets) {
+      t0 = performance.now();
+      let rows = 0;
+      let cells = 0;
+      wb.openSheet(sheet.index, undefined);
+      let json;
+      while ((json = wb.nextBatch(10_000)) !== undefined) {
+        const batch = JSON.parse(json);
+        rows += batch.length;
+        for (const r of batch) cells += r.length;
+        if (rows === batch.length && batch.length > 0 && !sample) {
+          sample = `first row of "${sheet.name}": ${JSON.stringify(batch[0]).slice(0, 200)}`;
+        }
+      }
+      const ms = (performance.now() - t0).toFixed(0);
+      text += `sheet ${sheet.index}  ${JSON.stringify(sheet.name).padEnd(24)} ${String(rows).padStart(9)} rows  ${String(cells).padStart(10)} cells  ${ms} ms\n`;
+      out.textContent = text;
+    }
+  } finally {
+    wb.free();
+  }
+  out.textContent = text + `\n${sample}`;
 }
 
 document.getElementById("pick").addEventListener("change", (e) => e.target.files[0] && handle(e.target.files[0]));
