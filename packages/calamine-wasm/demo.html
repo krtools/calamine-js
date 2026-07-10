@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>calamine-wasm demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1rem; }
+  #drop { border: 2px dashed #888; border-radius: 8px; padding: 3rem; text-align: center; color: #666; }
+  #drop.over { border-color: #06c; color: #06c; }
+  pre { background: #f4f4f4; padding: 1rem; border-radius: 6px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<h1>calamine-wasm</h1>
+<div id="drop">Drop an .xlsx here or <input type="file" id="pick" accept=".xlsx,.xls,.ods"></div>
+<pre id="out">waiting for file…</pre>
+<script type="module">
+import init, { countCells, readSheetJson } from "./pkg/web/calamine_wasm.js";
+
+await init();
+const out = document.getElementById("out");
+const drop = document.getElementById("drop");
+
+async function handle(file) {
+  out.textContent = `reading ${file.name} (${(file.size / 1048576).toFixed(2)} MB)…`;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  let t0 = performance.now();
+  const stats = JSON.parse(countCells(bytes));
+  const parseMs = (performance.now() - t0).toFixed(0);
+
+  t0 = performance.now();
+  const rows = JSON.parse(readSheetJson(bytes, 0));
+  const rowsMs = (performance.now() - t0).toFixed(0);
+
+  out.textContent =
+    `parse only (stats):   ${parseMs} ms\n` +
+    `parse -> JS rows:     ${rowsMs} ms\n\n` +
+    `stats: ${JSON.stringify(stats, null, 2)}\n\n` +
+    `first row: ${JSON.stringify(rows[0])?.slice(0, 200)}`;
+}
+
+document.getElementById("pick").addEventListener("change", (e) => e.target.files[0] && handle(e.target.files[0]));
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => {
+  e.preventDefault();
+  drop.classList.remove("over");
+  e.dataTransfer.files[0] && handle(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+  "name": "calamine-js",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Monorepo for @krllc/calamine-wasm and @krllc/calamine-native",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @krllc/calamine-native -w @krllc/calamine-wasm",
+    "test": "npm run test:all -w @krllc/calamine-wasm"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@vitest/browser": "^4.1.10",
+    "@vitest/browser-playwright": "^4.1.10",
+    "playwright": "^1.61.1",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "wasm-pack": "^0.15.0"
+  }
+}

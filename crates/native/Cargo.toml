@@ -1,0 +1,17 @@
+[package]
+name = "calamine-native"
+version = "0.1.0"
+edition = "2021"
+description = "calamine (xlsx reader) as a native Node.js addon"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+calamine-json-core = { path = "../core" }
+napi = { version = "2", default-features = false, features = ["napi8"] }
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"

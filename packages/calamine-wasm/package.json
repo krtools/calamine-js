@@ -1,0 +1,43 @@
+{
+  "name": "@krllc/calamine-wasm",
+  "version": "0.1.0",
+  "description": "calamine (Rust xlsx reader) compiled to WebAssembly, with a streaming worker-first client for Node.js and browsers",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "pkg",
+    "dist"
+  ],
+  "main": "./dist/client.js",
+  "types": "./dist/client.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./node": {
+      "types": "./pkg/node/calamine_wasm.d.ts",
+      "default": "./pkg/node/calamine_wasm.js"
+    },
+    "./web": {
+      "types": "./pkg/web/calamine_wasm.d.ts",
+      "default": "./pkg/web/calamine_wasm.js"
+    }
+  },
+  "scripts": {
+    "build:wasm": "wasm-pack build ../../crates/wasm --release --target nodejs --out-dir ../../packages/calamine-wasm/pkg/node --out-name calamine_wasm && wasm-pack build ../../crates/wasm --release --target web --out-dir ../../packages/calamine-wasm/pkg/web --out-name calamine_wasm",
+    "build:client": "tsc -p tsconfig.json",
+    "build": "npm run build:wasm && npm run build:client",
+    "test": "tsx test/client-test.ts",
+    "test:browser": "vitest run",
+    "test:all": "npm test && npm run test:browser",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@krllc/calamine-native": "*"
+  }
+}

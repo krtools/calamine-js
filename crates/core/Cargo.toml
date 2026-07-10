@@ -1,0 +1,10 @@
+[package]
+name = "calamine-json-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared core for the calamine JS bindings: streaming JSON serialization, pull cursor, workbook state machine"
+license = "MIT"
+
+[dependencies]
+calamine = { workspace = true }
+ouroboros = { workspace = true }
