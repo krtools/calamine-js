@@ -1,5 +1,7 @@
 # calamine-js
 
+[![CI](https://github.com/krtools/calamine-js/actions/workflows/ci.yml/badge.svg)](https://github.com/krtools/calamine-js/actions/workflows/ci.yml)
+
 Fast xlsx parsing for JavaScript, built on the Rust
 [calamine](https://crates.io/crates/calamine) crate. Monorepo for:
 

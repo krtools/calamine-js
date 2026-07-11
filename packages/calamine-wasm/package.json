@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "calamine (Rust xlsx reader) compiled to WebAssembly, with a streaming worker-first client for Node.js and browsers",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krtools/calamine-js.git",
+    "directory": "packages/calamine-wasm"
+  },
   "type": "module",
   "files": [
     "pkg",

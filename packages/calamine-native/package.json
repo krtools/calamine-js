@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "calamine (Rust xlsx reader) as a native Node.js addon — optional fast engine for @krllc/calamine-wasm's client",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/krtools/calamine-js.git",
+    "directory": "packages/calamine-native"
+  },
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
