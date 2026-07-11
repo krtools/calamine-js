@@ -109,7 +109,13 @@ pub fn count_cells<RS: Read + Seek>(wb: &mut Xlsx<RS>) -> Result<CellStats, Stri
         .worksheet_range_at(0)
         .ok_or_else(|| "no sheets".to_string())?
         .map_err(|e| format!("range failed: {e}"))?;
-    let mut s = CellStats { rows: range.height() as u32, cells: 0, non_empty: 0, float_sum: 0.0, str_len: 0 };
+    let mut s = CellStats {
+        rows: range.height() as u32,
+        cells: 0,
+        non_empty: 0,
+        float_sum: 0.0,
+        str_len: 0,
+    };
     for row in range.rows() {
         for cell in row {
             s.cells += 1;
@@ -135,7 +141,10 @@ pub fn count_cells<RS: Read + Seek>(wb: &mut Xlsx<RS>) -> Result<CellStats, Stri
 }
 
 /// Whole sheet as one JSON array-of-arrays string (giant-string path).
-pub fn read_sheet_json<RS: Read + Seek>(wb: &mut Xlsx<RS>, sheet_index: u32) -> Result<String, String> {
+pub fn read_sheet_json<RS: Read + Seek>(
+    wb: &mut Xlsx<RS>,
+    sheet_index: u32,
+) -> Result<String, String> {
     let range = wb
         .worksheet_range_at(sheet_index as usize)
         .ok_or_else(|| format!("no sheet at index {sheet_index}"))?
@@ -166,7 +175,10 @@ pub fn read_sheet_json<RS: Read + Seek>(wb: &mut Xlsx<RS>, sheet_index: u32) -> 
  * unselected cells (row marker only — never serialized); in dense mode it is
  * the column and the fragment is always Some. */
 
-type CellFn<'a> = Box<dyn FnMut() -> Result<Option<(u32, u32, Option<String>)>, String> + 'a>;
+/// (row, slot_or_col, serialized fragment)
+type CellItem = (u32, u32, Option<String>);
+type CellResult = Result<Option<CellItem>, String>;
+type CellFn<'a> = Box<dyn FnMut() -> CellResult + 'a>;
 
 fn make_cell_fn<'a, RS: Read + Seek>(
     wb: &'a mut Xlsx<RS>,
@@ -176,8 +188,12 @@ fn make_cell_fn<'a, RS: Read + Seek>(
     let mut reader = wb
         .worksheet_cells_reader(name)
         .map_err(|e| format!("reader failed: {e}"))?;
-    let slot_of: Option<std::collections::HashMap<u32, u32>> =
-        columns.map(|sel| sel.iter().enumerate().map(|(i, &c)| (c, i as u32)).collect());
+    let slot_of: Option<std::collections::HashMap<u32, u32>> = columns.map(|sel| {
+        sel.iter()
+            .enumerate()
+            .map(|(i, &c)| (c, i as u32))
+            .collect()
+    });
     Ok(Box::new(move || match reader.next_cell() {
         Err(e) => Err(format!("cell read failed: {e}")),
         Ok(None) => Ok(None),
@@ -282,7 +298,7 @@ impl RowState {
     fn next_batch(
         &mut self,
         batch_size: u32,
-        cells: &mut dyn FnMut() -> Result<Option<(u32, u32, Option<String>)>, String>,
+        cells: &mut dyn FnMut() -> CellResult,
     ) -> Result<Option<String>, String> {
         if self.finished {
             return Ok(None);
@@ -338,7 +354,10 @@ enum WbState<RS: Read + Seek + 'static> {
     /// transient placeholder during transitions
     Vacant,
     Idle(Xlsx<RS>),
-    Streaming { cursor: SheetCursor<RS>, rows: RowState },
+    Streaming {
+        cursor: SheetCursor<RS>,
+        rows: RowState,
+    },
 }
 
 /// Binding-agnostic workbook handle: sharedStrings parse once (construction),
@@ -354,7 +373,10 @@ pub struct WorkbookCore<RS: Read + Seek + 'static> {
 impl<RS: Read + Seek + 'static> WorkbookCore<RS> {
     pub fn new(wb: Xlsx<RS>) -> Self {
         let meta_json = meta_json(&wb);
-        WorkbookCore { state: WbState::Idle(wb), meta_json }
+        WorkbookCore {
+            state: WbState::Idle(wb),
+            meta_json,
+        }
     }
 
     /// Cached — usable even while a sheet is streaming.
@@ -401,7 +423,10 @@ impl<RS: Read + Seek + 'static> WorkbookCore<RS> {
         .try_build_or_recover();
         match built {
             Ok(cursor) => {
-                self.state = WbState::Streaming { cursor, rows: RowState::new(projected_len) };
+                self.state = WbState::Streaming {
+                    cursor,
+                    rows: RowState::new(projected_len),
+                };
                 Ok(())
             }
             Err((e, heads)) => {

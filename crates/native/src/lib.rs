@@ -17,7 +17,10 @@ fn napi_emit<'e>(
 ) -> impl FnMut(&str) -> std::result::Result<(), String> + 'e {
     move |batch: &str| {
         let js = env.create_string(batch).map_err(|e| e.to_string())?;
-        callback.call(None, &[js]).map(|_| ()).map_err(|e| e.to_string())
+        callback
+            .call(None, &[js])
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -42,7 +45,9 @@ impl Workbook {
     #[napi(constructor)]
     pub fn new(path: String) -> Result<Self> {
         let wb: FileWb = core::open_path(&path).map_err(napi_err)?;
-        Ok(Workbook { inner: core::WorkbookCore::new(wb) })
+        Ok(Workbook {
+            inner: core::WorkbookCore::new(wb),
+        })
     }
 
     /// JSON: {"sheets":[{"name":"...","index":0}, ...]} (cached)
@@ -62,7 +67,9 @@ impl Workbook {
         callback: JsFunction,
     ) -> Result<()> {
         let mut emit = napi_emit(&env, &callback);
-        self.inner.stream_sheet(index, batch_size, columns, &mut emit).map_err(napi_err)
+        self.inner
+            .stream_sheet(index, batch_size, columns, &mut emit)
+            .map_err(napi_err)
     }
 
     /// Pull API: open a cursor on sheet `index` (one at a time per workbook).

@@ -32,7 +32,9 @@ impl WasmWorkbook {
     #[wasm_bindgen(constructor)]
     pub fn new(data: Vec<u8>) -> Result<WasmWorkbook, JsError> {
         let wb: WbBytes = core::open_bytes(data).map_err(js_err)?;
-        Ok(WasmWorkbook { inner: core::WorkbookCore::new(wb) })
+        Ok(WasmWorkbook {
+            inner: core::WorkbookCore::new(wb),
+        })
     }
 
     /// JSON: {"sheets":[{"name":"...","index":0}, ...]} (cached)
@@ -50,7 +52,9 @@ impl WasmWorkbook {
         callback: &js_sys::Function,
     ) -> Result<(), JsError> {
         let mut emit = js_emit(callback);
-        self.inner.stream_sheet(index, batch_size, columns, &mut emit).map_err(js_err)
+        self.inner
+            .stream_sheet(index, batch_size, columns, &mut emit)
+            .map_err(js_err)
     }
 
     /// Pull API: open a cursor on sheet `index` (one at a time per workbook).
