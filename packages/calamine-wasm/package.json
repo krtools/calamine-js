@@ -3,6 +3,23 @@
   "version": "0.1.0",
   "description": "calamine (Rust xlsx reader) compiled to WebAssembly, with a streaming worker-first client for Node.js and browsers",
   "license": "MIT",
+  "keywords": [
+    "xlsx",
+    "excel",
+    "spreadsheet",
+    "calamine",
+    "wasm",
+    "webassembly",
+    "streaming",
+    "parser",
+    "worker"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/krtools/calamine-js.git",
@@ -34,7 +51,7 @@
     }
   },
   "scripts": {
-    "build:wasm": "wasm-pack build ../../crates/wasm --release --target nodejs --out-dir ../../packages/calamine-wasm/pkg/node --out-name calamine_wasm && wasm-pack build ../../crates/wasm --release --target web --out-dir ../../packages/calamine-wasm/pkg/web --out-name calamine_wasm",
+    "build:wasm": "wasm-pack build ../../crates/wasm --release --target nodejs --out-dir ../../packages/calamine-wasm/pkg/node --out-name calamine_wasm && wasm-pack build ../../crates/wasm --release --target web --out-dir ../../packages/calamine-wasm/pkg/web --out-name calamine_wasm && node -e \"for (const t of ['node','web']) require('fs').rmSync('pkg/'+t+'/.gitignore', {force:true})\"",
     "build:client": "tsc -p tsconfig.json",
     "build": "npm run build:wasm && npm run build:client",
     "test": "tsx test/client-test.ts",

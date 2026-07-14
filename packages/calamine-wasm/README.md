@@ -2,7 +2,7 @@
 
 [calamine](https://crates.io/crates/calamine) (Rust xlsx/xls/ods reader) compiled
 to WebAssembly, with a streaming, worker-first TypeScript client for Node.js and
-browsers. ~430 KB .wasm (~213 KB brotli over the wire), no native build step for
+browsers. ~535 KB .wasm (~232 KB brotli over the wire), no native build step for
 consumers.
 
 Designed for memory-aggressive parsing: rows stream out in batches and are
