@@ -40,13 +40,15 @@ crates/core      calamine-json-core: open_*, meta_json, count_cells,
 crates/wasm      wasm-bindgen shim -> WasmWorkbook + free fns
 crates/native    napi shim -> Workbook + free fns (+ SheetStats object)
 packages/calamine-wasm
-  src-js/client.ts        public API (openWorkbook/readAll), transports,
-                          pull-window flow control, AsyncQueue
+  src-js/client.ts        public API (openWorkbook/readAll/openSession),
+                          transports (reassignable handler), pull-window flow
+                          control, AsyncQueue
   src-js/worker-core.ts   handler shared by both workers AND inline mode
-  src-js/worker-browser.ts / worker-node.ts   thin entries
+  src-js/worker-browser.ts / worker-node.ts   thin entries (never self-
+                          terminate; the client owns teardown via terminate())
   src-js/protocol.ts      wire messages (sequential, no correlation ids)
   src-js/rows.ts          header/columns/dates transforms (RowTransformer)
-  test/client-test.ts     14 Node tests (tsx)
+  test/client-test.ts     15 Node tests (tsx)
   test/client.browser.test.ts  6 real-browser tests (vitest+playwright)
   test/fixtures/sms-small.xlsx checked-in fixture (10,240-row Messages +
                           500-row Contacts, deterministic)
@@ -84,6 +86,11 @@ after touching `src-js/`.
   `open_sheet` MOVES the workbook into the cursor (ouroboros self-ref struct);
   `close_sheet`/exhaustion moves it back. sharedStrings parse once per
   workbook. `meta()` is cached at construction so it works mid-stream.
+- **`openSession()` reuses one warm worker across many workbooks** (module
+  compiled once; `dispose()` reclaims). Opt-in and additive — the worker core
+  already did open→close→open; `close` frees the workbook without terminating,
+  the entries no longer self-terminate, and `close` resets the cursor flag.
+  One workbook open at a time per session (one WASM instance).
 - **Over-pulls past EOF are normal** (inherent to the window): the worker
   answers `sheetEnd` for a pull with no open cursor rather than erroring.
 - **Early `break` from a sheet iteration keeps the workbook usable**

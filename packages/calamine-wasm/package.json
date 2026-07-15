@@ -1,6 +1,6 @@
 {
   "name": "@krllc/calamine-wasm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "calamine (Rust xlsx reader) compiled to WebAssembly, with a streaming worker-first client for Node.js and browsers",
   "license": "MIT",
   "keywords": [

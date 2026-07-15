@@ -23,6 +23,20 @@ instance. Terminating the worker on `close()`/dispose does that
 deterministically. Node runs files < 8 MB inline (worker startup isn't worth
 it) and workers above.
 
+**Warm-worker sessions (`openSession`).** The 1:1 worker↔workbook rule above
+buys deterministic reclamation but costs a worker spawn + module compile per
+file — wasteful for a queue. `openSession()` is the opt-in escape hatch: one
+worker stays warm across many `open`/`close` cycles (the module compiles once),
+and `dispose()` terminates it to reclaim at the end. It's purely additive —
+the core already supported it (the worker's `close` op frees the workbook but
+never terminated; only the entry wrappers self-closed and the client called
+`terminate()`), so the change was to (a) stop the entries self-terminating and
+let the client own teardown, (b) reset the cursor flag on `close` so an
+abandoned stream can't leak into the next workbook, and (c) let a session lend
+its transport to successive `WorkbookImpl`s whose `close()` frees-but-keeps.
+One workbook streams at a time per session (one WASM instance); N sessions give
+N-way concurrency. `openWorkbook` is unchanged — a session is strictly opt-in.
+
 **Sheets stream via a pull cursor, not a push callback.** The original
 design streamed a whole sheet through one synchronous wasm call, which made
 flow control impossible without `Atomics.wait` on a SharedArrayBuffer — and

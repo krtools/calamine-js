@@ -19,7 +19,10 @@ const handler = createWorkerHandler(
   (msg) => port.postMessage(msg),
 );
 
+// The worker never self-terminates: `close` just frees the current workbook
+// (so the worker can be reused for the next `open` — see openSession), and
+// the CLIENT owns teardown via transport.terminate() (Workbook.close for
+// openWorkbook, WorkbookSession.dispose for a warm session).
 port.on("message", async (msg: MainToWorker) => {
   await handler(msg);
-  if (msg.op === "close") port.close();
 });

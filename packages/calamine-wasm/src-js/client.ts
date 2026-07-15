@@ -9,6 +9,16 @@
  * Node: files < 8 MB parse inline, larger ones in a worker_threads worker
  * (override with worker: "always" | "never"). engine: "native" runs the
  * calamine NAPI addon behind the same API (Node + path sources only).
+ *
+ * Parsing MANY files? `openSession()` keeps ONE worker (and its compiled WASM)
+ * warm across a sequence of workbooks — the module is compiled once, not once
+ * per file — and `dispose()` terminates it to reclaim the heap at the end:
+ *
+ * await using session = openSession();
+ * for (const file of files) {
+ *   await using wb = session.open(file);     // reuses the warm worker
+ *   for await (const b of wb.sheet(0)) { ... }
+ * }                                          // wb.close() frees the workbook, keeps the worker
  */
 import type { MainToWorker, OpenSource, SheetInfo, WorkbookMeta, WorkerToMain } from "./protocol.js";
 import { RowTransformer, type SheetOptions } from "./rows.js";
@@ -73,6 +83,24 @@ export async function readAll<T = unknown[]>(source: Source, opts: ParseOptions 
   }
 }
 
+/**
+ * A warm-worker session: parse a sequence of workbooks through ONE worker so
+ * the WASM module is compiled once instead of once per file. One workbook is
+ * open at a time — close the current one before opening the next (open N
+ * sessions for N-way concurrency). `dispose()` terminates the worker and
+ * reclaims its WASM heap.
+ */
+export interface WorkbookSession extends AsyncDisposable {
+  /** Open a workbook in this session's warm worker. */
+  open(source: Source, opts?: WorkbookOptions): Workbook;
+  /** Terminate the worker; reclaims the WASM heap. Idempotent. */
+  dispose(): Promise<void>;
+}
+
+export function openSession(opts: WorkbookOptions = {}): WorkbookSession {
+  return new SessionImpl(opts);
+}
+
 /* ------------------------------------------------------------------ */
 
 // window check guards against browser environments that shim `process`
@@ -83,27 +111,33 @@ interface Transport {
   post(msg: MainToWorker, transfer?: ArrayBuffer[]): void;
   terminate(): void | Promise<unknown>;
   readonly isWorker: boolean;
+  /** Route incoming worker messages to the given handler. Reassignable so a
+   *  session can point the transport at whichever workbook is currently open. */
+  setHandler(onMsg: (m: WorkerToMain) => void): void;
 }
 
-async function createWorkerTransport(onMsg: (m: WorkerToMain) => void): Promise<Transport> {
+async function createWorkerTransport(): Promise<Transport> {
+  let handler: (m: WorkerToMain) => void = () => {};
   if (isNode) {
     const { Worker } = await import("node:worker_threads");
     const w = new Worker(new URL("./worker-node.js", import.meta.url));
-    w.on("message", onMsg);
-    w.on("error", (e) => onMsg({ ev: "error", message: e instanceof Error ? e.message : String(e) }));
+    w.on("message", (m: WorkerToMain) => handler(m));
+    w.on("error", (e) => handler({ ev: "error", message: e instanceof Error ? e.message : String(e) }));
     return {
       post: (m, transfer) => w.postMessage(m, transfer),
       terminate: () => w.terminate(),
       isWorker: true,
+      setHandler: (h) => (handler = h),
     };
   }
   const w = new Worker(new URL("./worker-browser.js", import.meta.url), { type: "module" });
-  w.onmessage = (e: MessageEvent<WorkerToMain>) => onMsg(e.data);
-  w.onerror = (e) => onMsg({ ev: "error", message: e.message || "worker error" });
+  w.onmessage = (e: MessageEvent<WorkerToMain>) => handler(e.data);
+  w.onerror = (e) => handler({ ev: "error", message: e.message || "worker error" });
   return {
     post: (m, transfer) => w.postMessage(m, transfer ?? []),
     terminate: () => w.terminate(),
     isWorker: true,
+    setHandler: (h) => (handler = h),
   };
 }
 
@@ -111,23 +145,24 @@ async function createWorkerTransport(onMsg: (m: WorkerToMain) => void): Promise<
  * sheet's batches are produced synchronously here, so they buffer in memory —
  * fine for small files, wrong for big ones (that's what workers are for).
  * Backpressure is ignored (Atomics.wait on the calling thread would deadlock). */
-async function createInlineTransport(onMsg: (m: WorkerToMain) => void): Promise<Transport> {
+async function createInlineTransport(): Promise<Transport> {
+  let handler: (m: WorkerToMain) => void = () => {};
   const { createWorkerHandler } = await import("./worker-core.js");
-  let handler: (msg: MainToWorker) => Promise<void>;
+  let wkHandler: (msg: MainToWorker) => Promise<void>;
   if (isNode) {
     const { createRequire } = await import("node:module");
     const { readFileSync } = await import("node:fs");
     const require_ = createRequire(import.meta.url);
-    handler = createWorkerHandler(
+    wkHandler = createWorkerHandler(
       {
         loadWasm: async () => require_("../pkg/node/calamine_wasm.js"),
         readFile: (p) => readFileSync(p),
         loadNative: async (modulePath) => require_(modulePath),
       },
-      onMsg,
+      (m) => handler(m),
     );
   } else {
-    handler = createWorkerHandler(
+    wkHandler = createWorkerHandler(
       {
         loadWasm: async (wasmUrl) => {
           const mod = (await import("../pkg/web/calamine_wasm.js")) as Record<string, unknown>;
@@ -135,10 +170,10 @@ async function createInlineTransport(onMsg: (m: WorkerToMain) => void): Promise<
           return mod as never;
         },
       },
-      onMsg,
+      (m) => handler(m),
     );
   }
-  return { post: (m) => void handler(m), terminate: () => {}, isWorker: false };
+  return { post: (m) => void wkHandler(m), terminate: () => {}, isWorker: false, setHandler: (h) => (handler = h) };
 }
 
 class AsyncQueue<T> implements AsyncIterable<T> {
@@ -189,6 +224,18 @@ interface Waiter<T> {
 
 type RawBatch = { rows?: unknown[][]; json?: string };
 
+/** How a WorkbookImpl gets and gives back its transport. openWorkbook owns
+ *  one (terminate on close); a session lends a shared one (kept warm). */
+interface Connection {
+  /** Resolve the transport to use (spawns a worker the first time). */
+  acquire(): Promise<Transport>;
+  /** close()/fail() reached its end. `owned` transports are terminated by
+   *  the caller; shared (session) transports are left alive. */
+  readonly ownsTransport: boolean;
+  /** Notify the owner (session) that this workbook is finished. */
+  release(): void;
+}
+
 class WorkbookImpl implements Workbook {
   private transport: Transport | null = null;
   private starting: Promise<void> | null = null;
@@ -205,8 +252,13 @@ class WorkbookImpl implements Workbook {
   constructor(
     private readonly source: Source,
     private readonly opts: WorkbookOptions,
+    private readonly conn?: Connection,
   ) {
     opts.signal?.addEventListener("abort", () => this.fail(new Error("aborted")), { once: true });
+  }
+
+  get isClosed(): boolean {
+    return this.closed || this.failure !== null;
   }
 
   private onMsg = (m: WorkerToMain): void => {
@@ -247,7 +299,19 @@ class WorkbookImpl implements Workbook {
     this.sheetOpenWaiter = null;
     this.activeSheet?.end(e);
     this.activeSheet = null;
-    void this.transport?.terminate();
+    if (this.conn) {
+      // Shared worker: don't kill it on a per-workbook failure. Best-effort
+      // reset so the session can reuse it (worker frees the workbook + clears
+      // its cursor state on close), then hand the worker back.
+      try {
+        this.transport?.post({ op: "close" });
+      } catch {
+        // transport dead — nothing to reset
+      }
+      this.conn.release();
+    } else {
+      void this.transport?.terminate();
+    }
     this.transport = null;
   }
 
@@ -273,6 +337,10 @@ class WorkbookImpl implements Workbook {
     return size >= NODE_INLINE_LIMIT;
   }
 
+  private async makeOwnTransport(): Promise<Transport> {
+    return (await this.useWorker()) ? await createWorkerTransport() : await createInlineTransport();
+  }
+
   private start(): Promise<void> {
     this.checkUsable();
     this.starting ??= (async () => {
@@ -284,9 +352,9 @@ class WorkbookImpl implements Workbook {
       }
       if (typeof this.source === "string" && !isNode) throw new Error("file-path sources are only supported in Node");
 
-      this.transport = (await this.useWorker())
-        ? await createWorkerTransport(this.onMsg)
-        : await createInlineTransport(this.onMsg);
+      this.transport = this.conn ? await this.conn.acquire() : await this.makeOwnTransport();
+      // Point the (possibly shared) transport at this workbook's handler.
+      this.transport.setHandler(this.onMsg);
 
       // Buffers are TRANSFERRED to the worker (zero copy, source is detached).
       // Pass a copy if the caller needs to keep the bytes.
@@ -459,12 +527,71 @@ class WorkbookImpl implements Workbook {
       } catch {
         // transport already dead — terminate below is what matters
       }
-      await this.transport.terminate();
+      if (this.conn) {
+        // Shared worker: the workbook is freed above; leave the worker warm
+        // for the next open and hand it back to the session.
+        this.conn.release();
+      } else {
+        await this.transport.terminate();
+      }
       this.transport = null;
     }
   }
 
   async [Symbol.asyncDispose](): Promise<void> {
     return this.close();
+  }
+}
+
+class SessionImpl implements WorkbookSession {
+  private transport: Transport | null = null;
+  private transportStarting: Promise<Transport> | null = null;
+  private active: WorkbookImpl | null = null;
+  private disposed = false;
+
+  constructor(private readonly opts: WorkbookOptions) {}
+
+  private acquire = async (): Promise<Transport> => {
+    if (this.disposed) throw new Error("session is disposed");
+    if (this.transport) return this.transport;
+    // A session keeps ONE worker warm; an inline "session" is meaningless
+    // (the in-thread WASM already persists), but honor worker: "never".
+    this.transportStarting ??= (this.opts.worker === "never" ? createInlineTransport() : createWorkerTransport()).then(
+      (t) => (this.transport = t),
+    );
+    return this.transportStarting;
+  };
+
+  open(source: Source, opts: WorkbookOptions = {}): Workbook {
+    if (this.disposed) throw new Error("session is disposed");
+    if (this.active && !this.active.isClosed) {
+      throw new Error("a workbook is already open in this session — close it before opening another");
+    }
+    const conn: Connection = {
+      acquire: this.acquire,
+      ownsTransport: false,
+      release: () => {
+        if (this.active === wb) this.active = null;
+      },
+    };
+    // Force the shared transport's mode; per-workbook size heuristics don't
+    // apply once a worker is warm.
+    const wb = new WorkbookImpl(source, { ...this.opts, ...opts, worker: this.opts.worker === "never" ? "never" : "always" }, conn);
+    this.active = wb;
+    return wb;
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    const t = this.transport;
+    this.transport = null;
+    this.transportStarting = null;
+    this.active = null;
+    if (t) await t.terminate();
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    return this.dispose();
   }
 }

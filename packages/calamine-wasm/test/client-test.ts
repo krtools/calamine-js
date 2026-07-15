@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { openWorkbook, readAll } from "../dist/client.js";
+import { openSession, openWorkbook, readAll } from "../dist/client.js";
 
 const FILE = fileURLToPath(new URL("./fixtures/sms-small.xlsx", import.meta.url));
 const MESSAGES_ROWS = 10_240;
@@ -228,6 +228,58 @@ async function testWireJson() {
   console.log("  ok: wire json === wire rows");
 }
 
+async function testSession() {
+  const session = openSession();
+  try {
+    for (let i = 0; i < 3; i++) {
+      const wb = session.open(FILE);
+      try {
+        assert.deepEqual(
+          (await wb.meta()).sheets.map((s) => s.name),
+          ["Messages", "Contacts"],
+          `session open #${i} meta`,
+        );
+        const msgs = await wb.sheet("Messages", { batchSize: 2000 }).collect();
+        assert.equal(msgs.length, MESSAGES_ROWS, `session open #${i} row count`);
+      } finally {
+        await wb.close();
+      }
+    }
+
+    // One workbook at a time — opening while one is live throws.
+    const live = session.open(FILE);
+    assert.throws(() => session.open(FILE), /already open/, "one-at-a-time guard");
+    await live.close();
+
+    // A bad workbook must NOT kill the shared worker — the session recovers.
+    const bad = session.open(new Uint8Array([1, 2, 3, 4]).buffer);
+    await assert.rejects(() => bad.meta(), /open failed/, "bad bytes reject");
+    await bad.close();
+    const good = session.open(FILE);
+    try {
+      assert.equal(
+        (await good.sheet("Contacts").collect()).length,
+        CONTACTS_ROWS,
+        "session recovers after a bad workbook",
+      );
+    } finally {
+      await good.close();
+    }
+  } finally {
+    await session.dispose();
+  }
+  // A disposed session refuses further opens.
+  assert.throws(() => session.open(FILE), /disposed/, "disposed session guard");
+
+  // `await using` disposes the session.
+  {
+    await using s = openSession();
+    await using wb = s.open(FILE);
+    assert.equal((await wb.meta()).sheets.length, 2);
+  }
+  console.log("  ok: session reuses one warm worker (+ guard, recovery, dispose, await using)");
+}
+
 async function testNativeEngine() {
   for (const worker of ["always", "never"] as const) {
     const wb = openWorkbook(FILE, { engine: "native", nativeModulePath: NATIVE, worker });
@@ -265,5 +317,6 @@ await testProjectionPushdown();
 await testProjectionClientSide();
 await testBackpressure();
 await testWireJson();
+await testSession();
 await testNativeEngine();
 console.log(`all client tests passed in ${Date.now() - t0} ms`);

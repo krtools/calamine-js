@@ -76,6 +76,40 @@ Behavior worth knowing:
 - One sheet streams at a time per workbook (the cursor owns the workbook
   while open; sharedStrings are still parsed only once per workbook).
 
+## Parsing many files: `openSession()`
+
+`openWorkbook` ties the worker to the workbook — `close()` terminates it, which
+is how the WASM heap is reclaimed. Great for one file; wasteful for a queue,
+since every file re-spawns a worker and recompiles the module. `openSession()`
+keeps **one worker (and its compiled WASM) warm** across a sequence of
+workbooks, and `dispose()` terminates it to reclaim the heap at the end:
+
+```ts
+import { openSession } from "@krllc/calamine-wasm/client";
+
+await using session = openSession();          // one worker, module compiled once
+for (const file of files) {
+  await using wb = session.open(file);        // reuses the warm worker
+  for await (const batch of wb.sheet(0)) {
+    await ingest(batch.rows);
+  }
+}                                             // each wb.close() frees the workbook, keeps the worker
+// session disposed here -> worker terminated, WASM reclaimed
+```
+
+- **One workbook open at a time** per session (a session is one WASM instance).
+  Close the current workbook before opening the next; open N sessions for
+  N-way concurrency.
+- The returned handle is an ordinary `Workbook` — `meta` / `sheet` / `events` /
+  `close` are unchanged; only `close()` frees the workbook without killing the
+  worker.
+- A workbook that fails to parse does **not** kill the session — the worker is
+  reset and reused for the next `open`.
+- Sessions always use a worker (`worker: "never"` gives an inline session,
+  which is a no-op distinction since in-thread WASM already persists).
+- Reclaiming mid-queue is just `dispose()` + a fresh `openSession()`; because
+  this terminates only the parse worker, an enclosing app worker stays warm.
+
 ## Raw WASM API (`/node`, `/web` subpaths)
 
 For benchmarks and power users. WASM has no filesystem — pass bytes as `Uint8Array`.

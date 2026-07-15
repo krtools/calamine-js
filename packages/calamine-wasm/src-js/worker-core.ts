@@ -100,8 +100,13 @@ export function createWorkerHandler(
           break;
         }
         case "close": {
+          // Free the workbook but keep the worker (and its compiled WASM)
+          // alive — a session reuses it for the next `open`. Reset the
+          // cursor flag so a workbook abandoned mid-stream can't leak stale
+          // streaming state into the next one.
           wb?.free?.();
           wb = null;
+          streaming = false;
           break;
         }
       }
