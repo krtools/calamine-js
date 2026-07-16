@@ -157,6 +157,11 @@ after touching `src-js/`.
 - `@krllc/calamine-native`: current-platform only; a napi-rs GitHub Actions
   prebuild matrix (platform sub-packages via optionalDependencies) is the
   known path when it becomes a priority.
+- Every `@krllc/calamine-wasm` version bump updates
+  `packages/calamine-wasm/CHANGELOG.md` (Keep a Changelog format) in the same
+  commit, and the release commit gets an annotated tag `calamine-wasm-vX.Y.Z`
+  (pushed). Other packages get their own `<package>-vX.Y.Z` trains when they
+  start publishing.
 - Version packages independently (changesets or manual); the client's
   `engine: "native"` contract is `WorkbookHandle` in `worker-core.ts` — keep
   it in lockstep across both engines in the same PR.
